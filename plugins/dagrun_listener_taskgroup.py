@@ -9,6 +9,9 @@ from aiida.common.links import LinkType
 from pathlib import Path
 from typing import Any, Dict, Optional
 import json
+import sys
+sys.path.append('/home/geiger_j/aiida_projects/aiida-airflow/git-repos/airflow-prototype/dags/')
+from calcjob_inheritance import CalcJobTaskGroup
 
 load_profile()
 
@@ -139,6 +142,10 @@ def _store_params_as_aiida_inputs(
 
         # Convert to AiiDA data node
         aiida_data = _convert_to_aiida_data(value)
+        if isinstance(node, orm.WorkflowNode):
+            link_type = LinkType.INPUT_WORK
+        elif isinstance(node, orm.CalculationNode):
+            link_type = LinkType.INPUT_CALC
 
         if aiida_data is not None:
             try:
@@ -146,7 +153,7 @@ def _store_params_as_aiida_inputs(
                 aiida_data.store()
                 # Then add the link
                 node.base.links.add_incoming(
-                    aiida_data, link_type=LinkType.INPUT_CALC, link_label=link_label
+                    aiida_data, link_type=link_type, link_label=link_label
                 )
             except ValueError as e:
                 # Link already exists or other constraint violation
@@ -288,6 +295,7 @@ def _store_taskgroup_outputs(
         node: The CalcJobNode to link outputs to
         task_instance: The parse task instance
     """
+    # NOTE: Aren't all the constructs we create taskgroups? How to differentiate between DAG and calcjob
     try:
         # Get the final_result from the parse task
         final_result = task_instance.xcom_pull(
@@ -359,6 +367,18 @@ def _create_calcjob_node_from_taskgroup(
     Returns:
         The created and stored CalcJobNode
     """
+    # import ipdb; ipdb.set_trace()
+    # NOTE: locals()
+ #    {'dag_run': <DagRun calcjob_taskgroup_inheritance @ 2025-10-02 12:46:20.475698+00:00: manual__2025-10-02T12:46:23.084363+00:00, state:success, queued_at: None. run_type: manual>,
+ # 'ipdb': <module 'ipdb' from '/home/geiger_j/.aiida_venvs/aiida-airflow/lib/python3.10/site-packages/ipdb/__init__.py'>,
+ # 'parent_workchain_node': <WorkChainNode: uuid: 9bffc374-2153-4ae5-be6d-1feb1b786622 (pk: 355)>,
+ # 'task_instance': <TaskInstance: calcjob_taskgroup_inheritance.addition_job.parse manual__2025-10-02T12:46:23.084363+00:00 [success]>}
+
+    # NOTE: Should one pass a `task_instance` here, or shouldn't it be a taskgroup.
+    # possibly apply this function to every task group, and have special handling only when it is calcjob. if not, then store things in the "workchain way"
+
+    # if isinstance(CalcJobTaskGroup):
+
     group_id = _get_taskgroup_id_from_parse_task(task_instance)
 
     node = orm.CalcJobNode()
@@ -396,10 +416,13 @@ def _create_calcjob_node_from_taskgroup(
         )
 
     # Add inputs BEFORE storing the node
+    # TODO: Computer is not an input, but an attribute of the calcjob, or, rather, `metadata.computer`
     _store_taskgroup_inputs(node, task_instance, dag_run)
 
     # Now store the node (inputs are locked in)
     node.store()
+    # NOTE: final_result -> {'__classname__': 'builtins.tuple', '__version__': 1, '__data__': [0, {'result.out': 12}]}
+    # TODO: 
 
     # Outputs can be added after storing
     _store_taskgroup_outputs(node, task_instance)
@@ -432,6 +455,9 @@ def _create_workchain_node_with_inputs(dag_run: DagRun) -> orm.WorkChainNode:
     # Store ALL DAG parameters generically
     dag_params = getattr(dag_run.dag, "params", {})
     if dag_params:
+        # TODO: These are being set as inputs of the workflow, even though they are inputs of the calculations, and are just passed through the dag
+        # {'machine': 'localhost', 'local_workdir': '/home/geiger_j/airflow/storage/local_workdir', 'remote_workdir': '/home/geiger_j/airflow/storage/remote_workdir'}
+        # import ipdb; ipdb.set_trace()
         _store_params_as_aiida_inputs(workchain_node, dag_params, prefix="dag_param")
 
     # Store ALL DAG configuration generically
@@ -451,6 +477,7 @@ def _finalize_workchain_node_with_outputs(dag_run: DagRun) -> None:
     Find the WorkChainNode for a completed DAG run and add outputs (CalcJobNodes from TaskGroups).
     If the WorkChainNode doesn't exist yet, create it first.
     """
+    # NOTE: Why do i need to query for it? it should be directly accessible, no? -> it's bc i create it in the other function?
     from aiida.orm import QueryBuilder
 
     # Try to find the WorkChainNode created in on_dag_run_running

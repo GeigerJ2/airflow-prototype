@@ -6,9 +6,8 @@ Much cleaner and more Pythonic approach.
 """
 
 # Import the existing operators and extend them for TaskGroup usage
-import sys
 from abc import ABC, abstractmethod
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict
 
@@ -16,21 +15,14 @@ from aiida.transports import AsyncSshTransport
 from airflow import DAG
 from airflow.models import BaseOperator, Param
 from airflow.operators.python import PythonOperator
-from airflow.sdk import DAG, Param, get_current_context, task
-from airflow.sensors.time_sensor import TimeSensor
+from airflow.sdk import DAG, Param, task
 from airflow.triggers.temporal import TimeDeltaTrigger
 from airflow.utils.context import Context
 from airflow.utils.task_group import TaskGroup
 
-# sys.path.append(str(Path(__file__).parent))
-# from calcjob import (
-#     UploadOperator as BaseUploadOperator,
-#     SubmitOperator as BaseSubmitOperator,
-#     UpdateOperator,
-#     ReceiveOperator as BaseReceiveOperator,
-# )
 
 import os
+
 AIRFLOW_HOME_ = os.getenv("AIRFLOW_HOME", os.path.expanduser("~/airflow"))
 if AIRFLOW_HOME_ is None:
     raise ImportError("Could not find AIRFLOW_HOME.")
@@ -47,7 +39,14 @@ class UploadOperator(BaseOperator):
     template_fields = ["machine", "local_workdir", "remote_workdir", "to_upload_files"]
 
     # TODO remote kwargs or use for something useful
-    def __init__(self, machine: str, local_workdir: str, remote_workdir: str, to_upload_files: dict[str, str], **kwargs):
+    def __init__(
+        self,
+        machine: str,
+        local_workdir: str,
+        remote_workdir: str,
+        to_upload_files: dict[str, str],
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.machine = machine
         self.remote_workdir = remote_workdir
@@ -58,19 +57,30 @@ class UploadOperator(BaseOperator):
         # Pull to_upload_files from XCom if it's empty
         to_upload_files = self.to_upload_files
         if not to_upload_files:
-            to_upload_files = context['task_instance'].xcom_pull(task_ids='prepare', key='to_upload_files')
+            to_upload_files = context["task_instance"].xcom_pull(
+                task_ids="prepare", key="to_upload_files"
+            )
 
         remote_workdir = Path(self.remote_workdir)
         transport = AsyncSshTransport(machine=self.machine)
         with transport.open() as connection:
             for localpath, remotepath in to_upload_files.items():
-                connection.putfile(Path(localpath).absolute(), remote_workdir / Path(remotepath))
+                connection.putfile(
+                    Path(localpath).absolute(), remote_workdir / Path(remotepath)
+                )
 
 
 class SubmitOperator(BaseOperator):
     template_fields = ["machine", "local_workdir", "remote_workdir"]
 
-    def __init__(self, machine: str, local_workdir: str, remote_workdir: str, submission_script: str, **kwargs):
+    def __init__(
+        self,
+        machine: str,
+        local_workdir: str,
+        remote_workdir: str,
+        submission_script: str,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.machine = machine
         self.local_workdir = local_workdir
@@ -81,7 +91,9 @@ class SubmitOperator(BaseOperator):
         # Pull submission_script from XCom if it's empty
         submission_script = self.submission_script
         if not submission_script:
-            submission_script = context['task_instance'].xcom_pull(task_ids='prepare', key='submission_script')
+            submission_script = context["task_instance"].xcom_pull(
+                task_ids="prepare", key="submission_script"
+            )
 
         local_workdir = Path(self.local_workdir)
         remote_workdir = Path(self.remote_workdir)
@@ -89,13 +101,19 @@ class SubmitOperator(BaseOperator):
         submission_script_path = local_workdir / Path("submit.sh")
         submission_script_path.write_text(submission_script)
         with transport.open() as connection:
-            connection.putfile(submission_script_path, remote_workdir / "submit.sh" )
-            exit_code, stdout, stderr = connection.exec_command_wait(f"(bash {submission_script_path} > /dev/null 2>&1 & echo $!) &", workdir=remote_workdir)
+            connection.putfile(submission_script_path, remote_workdir / "submit.sh")
+            exit_code, stdout, stderr = connection.exec_command_wait(
+                f"(bash {submission_script_path} > /dev/null 2>&1 & echo $!) &",
+                workdir=remote_workdir,
+            )
         if exit_code != 0:
             raise ValueError(f"Submission did not work, {stderr}")
         job_id = int(stdout.strip())
-        self.log.info(f"Output of submission of process: {job_id}") #parse out correction
+        self.log.info(
+            f"Output of submission of process: {job_id}"
+        )  # parse out correction
         return job_id
+
 
 class UpdateOperator(BaseOperator):
     template_fields = ["machine", "sleep"]
@@ -127,7 +145,9 @@ class UpdateOperator(BaseOperator):
         job_id = self.job_id.resolve(context)
         with transport.open() as connection:
             # -0 does not kill the process, only verifies it
-            retval, stdout_bytes, stderr_bytes = connection.exec_command_wait(f"kill -0 {job_id}")
+            retval, stdout_bytes, stderr_bytes = connection.exec_command_wait(
+                f"kill -0 {job_id}"
+            )
         self.log.info(f"retval={retval}")
         return bool(retval)
         # TODO check why it is not alive
@@ -136,7 +156,14 @@ class UpdateOperator(BaseOperator):
 class ReceiveOperator(BaseOperator):
     template_fields = ["machine", "local_workdir", "remote_workdir", "to_receive_files"]
 
-    def __init__(self, machine: str, local_workdir: str, remote_workdir: str, to_receive_files: dict[str, str], **kwargs):
+    def __init__(
+        self,
+        machine: str,
+        local_workdir: str,
+        remote_workdir: str,
+        to_receive_files: dict[str, str],
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.machine = machine
         self.local_workdir = local_workdir
@@ -147,15 +174,18 @@ class ReceiveOperator(BaseOperator):
         # Pull to_receive_files from XCom if it's empty
         to_receive_files = self.to_receive_files
         if not to_receive_files:
-            to_receive_files = context['task_instance'].xcom_pull(task_ids='prepare', key='to_receive_files')
+            to_receive_files = context["task_instance"].xcom_pull(
+                task_ids="prepare", key="to_receive_files"
+            )
 
         transport = AsyncSshTransport(machine=self.machine)
         local_workdir = Path(self.local_workdir)
         remote_workdir = Path(self.remote_workdir)
         with transport.open() as connection:
             for remotepath, localpath in to_receive_files.items():
-                connection.getfile(remote_workdir / Path(remotepath), local_workdir / Path(localpath))
-
+                connection.getfile(
+                    remote_workdir / Path(remotepath), local_workdir / Path(localpath)
+                )
 
 
 class TaskGroupUploadOperator(UploadOperator):
@@ -490,83 +520,146 @@ echo "Operation: {self.x} * {self.y}" > operation.log
         return results
 
 
-# Create DAG
-default_args = {
-    "owner": "alexgo",
-    "depends_on_past": False,
-    "start_date": datetime(2025, 1, 1),
-    "email_on_failure": False,
-    "email_on_retry": False,
-    "retries": 0,
-}
+class WorkChainResultOperator(BaseOperator):
+    """
+    Extract and combine results from CalcJobTaskGroups.
+    Mirrors AiiDA's WorkChain.result() method.
+    """
 
-with DAG(
-    dag_id="calcjob_taskgroup_inheritance",
-    default_args=default_args,
-    description="CalcJob TaskGroup using direct inheritance",
-    schedule=None,
-    catchup=False,
-    tags=["inheritance", "calcjob", "taskgroup"],
-    params={
-        "machine": Param("localhost", type="string"),
-        "local_workdir": Param(
-            str(LOCAL_WORKDIR), type="string"
-        ),
-        "remote_workdir": Param(
-            str(REMOTE_WORKDIR), type="string"
-        ),
-    },
-) as dag:
-    # Create task groups directly - no builder pattern needed!
-    # Use separate local and remote directories to avoid file conflicts
-    add_job = AddJobTaskGroup(
-        group_id="addition_job",
-        machine="{{ params.machine }}",
-        local_workdir="{{ params.local_workdir }}/addition_job",
-        remote_workdir="{{ params.remote_workdir }}/addition_job",
-        x=8,
-        y=4,
-        sleep=3,
+    def __init__(self, task_group_ids: list[str], **kwargs):
+        super().__init__(**kwargs)
+        self.task_group_ids = task_group_ids
+
+    def execute(self, context: Context):
+        results = {}
+
+        for group_id in self.task_group_ids:
+            final_result = context["task_instance"].xcom_pull(
+                task_ids=f"{group_id}.parse", key="final_result"
+            )
+
+            # Normalize different result formats
+            if isinstance(final_result, tuple) and len(final_result) == 2:
+                exit_status, data = final_result
+                results[group_id] = data
+            elif isinstance(final_result, dict):
+                results[group_id] = final_result
+            else:
+                results[group_id] = final_result
+
+        return results
+
+
+# ============================================================================
+# DAG Factory Functions (Reusable WorkChains)
+# ============================================================================
+
+
+def create_multiply_add_dag(
+    x: int,
+    y: int,
+    z: int,
+    machine: str = "localhost",
+    local_workdir: str = None,
+    remote_workdir: str = None,
+    dag_id: str = None,
+    **dag_kwargs,
+) -> DAG:
+    """
+    Factory function to create a MultiplyAddWorkChain DAG.
+
+    Mirrors AiiDA's MultiplyAddWorkChain that can be instantiated with different inputs.
+
+    Args:
+        x: First number
+        y: Second number
+        z: Third number
+        machine: Machine to run on
+        dag_id: Custom DAG ID (auto-generated if not provided)
+        **dag_kwargs: Additional DAG parameters
+
+    Returns:
+        DAG: Configured Airflow DAG
+
+    Usage:
+        # In dags/ folder
+        dag = create_multiply_add_dag(x=5, y=3, z=2)
+
+        # Or programmatically
+        my_dag = create_multiply_add_dag(x=10, y=20, z=5, dag_id="custom_multiply_add")
+        my_dag.test()
+    """
+
+    local_workdir = local_workdir or str(LOCAL_WORKDIR)
+    remote_workdir = remote_workdir or str(REMOTE_WORKDIR)
+    dag_id = dag_id or f"multiply_add_x{x}_y{y}_z{z}"
+
+    default_args = {
+        "owner": "airflow",
+        "depends_on_past": False,
+        "start_date": datetime(2025, 1, 1),
+        "retries": 0,
+    }
+    default_args.update(dag_kwargs.pop("default_args", {}))
+
+    dag = DAG(
+        dag_id=dag_id,
+        default_args=default_args,
+        description=f"MultiplyAddWorkChain: ({x} * {y}) + {z}",
+        schedule=None,
+        catchup=False,
+        tags=["aiida", "calcjob", "workchain", "multiply_add"],
+        params={
+            "x": Param(default=x, type="integer", description="First number"),
+            "y": Param(default=y, type="integer", description="Second number"),
+            "z": Param(default=z, type="integer", description="Third number"),
+            "machine": Param(default=machine, type="string"),
+            "local_workdir": Param(default=local_workdir, type="string"),
+            "remote_workdir": Param(default=remote_workdir, type="string"),
+        },
+        **dag_kwargs,
     )
 
-    multiply_job = MultiplyJobTaskGroup(
-        group_id="multiplication_job",
-        machine="{{ params.machine }}",
-        local_workdir="{{ params.local_workdir }}/multiplication_job",
-        remote_workdir="{{ params.remote_workdir }}/multiplication_job",
-        x=6,
-        y=9,
-        sleep=2,
-    )
-
-    @task
-    def combine_results():
-        """Combine results from both job types"""
-        from airflow.sdk import get_current_context
-
-        context = get_current_context()
-        task_instance = context["task_instance"]
-
-        add_result = task_instance.xcom_pull(
-            task_ids="addition_job.parse", key="final_result"
-        )
-        multiply_result = task_instance.xcom_pull(
-            task_ids="multiplication_job.parse", key="final_result"
+    with dag:
+        multiply_job = MultiplyJobTaskGroup(
+            group_id="multiply",
+            machine="{{ params.machine }}",
+            local_workdir="{{ params.local_workdir }}/multiply",
+            remote_workdir="{{ params.remote_workdir }}/multiply",
+            x="{{ params.x }}",
+            y="{{ params.y }}",
+            sleep=2,
         )
 
-        combined = {
-            "addition": add_result,
-            "multiplication": multiply_result,
-        }
+        add_job = AddJobTaskGroup(
+            group_id="add",
+            machine="{{ params.machine }}",
+            local_workdir="{{ params.local_workdir }}/add",
+            remote_workdir="{{ params.remote_workdir }}/add",
+            x="{{ params.z }}",
+            y="{{ params.z }}",
+            sleep=3,
+        )
 
-        print(f"Combined results: {combined}")
-        return combined
+        result = WorkChainResultOperator(
+            task_id="result",
+            task_group_ids=["multiply", "add"],
+        )
 
-    # Direct usage - add_job and multiply_job ARE TaskGroups!
-    combine_task = combine_results()
-    [add_job, multiply_job] >> combine_task
+        multiply_job >> add_job >> result
+
+    return dag
+
+
+# Create default DAG instance (Airflow will discover this)
+multiply_add_default = create_multiply_add_dag(
+    x=1, y=1, z=1, dag_id="multiply_add_default"
+)
 
 
 if __name__ == "__main__":
-    print("Testing calcjob_taskgroup_inheritance DAG...")
-    dag.test()
+    print("Testing multiply_add_default DAG...")
+    print(
+        'Usage: airflow dags trigger multiply_add_default --conf \'{"x": 5, "y": 3, "z": 2}\''
+    )
+    multiply_add_default.test()
