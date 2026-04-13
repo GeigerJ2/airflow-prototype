@@ -32,19 +32,15 @@ def on_task_instance_running(
     previous_state: TaskInstanceState,
     task_instance: RuntimeTaskInstance
 ):
-    """
-    Called when a task instance state changes to RUNNING.
-    
-    Args:
-        previous_state: The state before RUNNING
-        task_instance: RuntimeTaskInstance with task details
-    """
+    """Called when a task instance state changes to RUNNING."""
+
     print(f"Task {task_instance.task_id} is now running")
     print(f"Previous state: {previous_state}")
     
     # Access task context for more info
     context = task_instance.get_template_context()
     task = context["task"]
+    # NOTE: DAG always available
     dag = task.dag
 
 
@@ -53,23 +49,7 @@ def on_task_instance_success(
     previous_state: TaskInstanceState,
     task_instance: RuntimeTaskInstance | TaskInstance
 ):
-    """
-    Called when a task instance state changes to SUCCESS.
-    
-    Args:
-        previous_state: The state before SUCCESS
-        task_instance: RuntimeTaskInstance (normal) or TaskInstance (API/UI triggered)
-    
-    Note: RuntimeTaskInstance is provided in most cases. TaskInstance is provided
-          when state change is triggered via API/UI (Airflow 3+).
-    """
-    
-    if isinstance(task_instance, RuntimeTaskInstance):
-        # RuntimeTaskInstance - normal execution
-        context = task_instance.get_template_context()
-        operator = context["task"]
-        print(f"Operator: {operator}")
-
+    pass
 
 @hookimpl
 def on_task_instance_failed(
@@ -77,14 +57,6 @@ def on_task_instance_failed(
     task_instance: RuntimeTaskInstance | TaskInstance,
     error: None | str | BaseException,
 ):
-    """
-    Called when a task instance state changes to FAILED.
-    
-    Args:
-        previous_state: The state before FAILED
-        task_instance: RuntimeTaskInstance (normal) or TaskInstance (API/UI triggered)
-        error: The error that caused the failure (if available)
-    """
     pass    
 
 
